@@ -95,7 +95,7 @@ class Grid:
                     
         return new_cells_slice
 
-    # Concurrent update function
+    # Concurrent update method
     def update(self):
 
         new_cells = [[[None for _ in range(self.size)] for _ in range(self.size)] for _ in range(self.size)]
@@ -106,16 +106,17 @@ class Grid:
         
         # ThreadPoolExecutor to parallelise updates
         with ThreadPoolExecutor() as executor:
-            futures = []
+            future_to_start = {}
             for i in range(num_chunks):
                 start_x = i * chunk_size
                 end_x = (i + 1) * chunk_size if i != num_chunks - 1 else self.size
-                futures.append(executor.submit(self.batch_update, start_x, end_x))
+                future = executor.submit(self.batch_update, start_x, end_x)
+                future_to_start[future] = start_x
 
             # Collect results
-            for i, future in enumerate(as_completed(futures)):
+            for future in as_completed(future_to_start):
                 new_cells_slice = future.result()
-                start_x = i * chunk_size
+                start_x = future_to_start[future]
                 for x in range(len(new_cells_slice)):
                     new_cells[start_x + x] = new_cells_slice[x]
         
