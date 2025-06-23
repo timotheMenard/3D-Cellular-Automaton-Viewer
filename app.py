@@ -1,14 +1,14 @@
 import os
 from flask import Flask, jsonify, render_template, request
 from grid import Grid
+from pymongo import MongoClient
 
 app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Ensure upload directory exists
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+mongo_uri = os.environ.get('MONGO_URI', 'mongodb://mongo:27017/')
+client = MongoClient(mongo_uri)
+db = client['cellular_automaton']
+grid_collection = db['grids']
 
 n = 5
 grid = None
@@ -21,10 +21,12 @@ def initialise_grid(sizestr):
     grid = Grid(size, initial_state, {0:0, 1:0xff0000})
     return [[[cell.celldict() for cell in z] for z in y] for y in grid.cells]
 
+
 @app.route('/')
 def index():
     """Render the main HTML page."""
     return render_template('index.html')
+
 
 @app.route('/initial_state', methods=['POST'])
 def get_initial_state():
@@ -33,6 +35,7 @@ def get_initial_state():
     initial_state = initialise_grid(size)
     return jsonify(initial_state)
 
+
 @app.route('/next', methods=['POST'])
 def next_step():
     """API endpoint: advance grid to next generation and return updated state."""
@@ -40,69 +43,85 @@ def next_step():
     new_state = [[[cell.celldict() for cell in z] for z in y] for y in grid.cells]
     return jsonify(new_state)
 
+
 @app.route('/save', methods=['POST'])
 def save_grid():
-    """API endpoint: save current grid state and colours to a text file."""
-    data = request.json
-    filename = data.get('filename', 'grid_state.txt')
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename + ".txt")
+    """API endpoint: saves the current grid state into the MongoDB collection, inserting a new document
+    or replacing an existing one by name."""
+    data = request.get_json()
+    filename = data.get('filename', 'grid_state')
 
-    cellcolours = {}
+    # Build a document
+    doc = {
+        'name': filename,
+        'size': grid.size,
+        'cells': [[[cell.cell_type for cell in z] for z in y] for y in grid.cells],
+        'colours': {str(ct): hex(col) for ct, col in grid.colours.items()},
+        'predefined_update': grid.predefined_update
+    }
 
-    with open(filepath, 'w') as f:
-        f.write(f"{grid.size} ")
-        for x in grid.cells:
-            for y in x:
-                f.write("".join(str(cell.cell_type) for cell in y))
+    # Upsert by name
+    result = grid_collection.replace_one(
+        {'name': filename},
+        doc,
+        upsert=True
+    )
 
-                for cell in y:
-                    cellcolours[str(cell.cell_type)] = hex(cell.colour)
+    return jsonify({"message": f"Grid '{filename}' saved.", "id": str(result.upserted_id or filename)})
 
-        f.write("".join(f' {cell_type} {colour}' for cell_type, colour in cellcolours.items()))
-
-        f.write(f' {grid.predefined_update}')
-
-
-    return jsonify({"message": "Grid saved successfully", "filename": filename + ".txt"})
 
 @app.route('/load', methods=['POST'])
 def load_grid():
-    """API endpoint: load grid state from uploaded file and respond with its state."""
-    file = request.files['file']
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-    file.save(file_path)
+    """API endpoint: load a saved grid state from MongoDB and reinitialise the global Grid object."""
+    try:
 
-    with open(file_path, 'r') as f:
-        content = f.read().strip()
+        filename = request.get_json().get('filename')
 
-    # Get the size of the grid and the grid
-    parts = content.split()
-    size = int(parts[0])
-    grid_data = parts[1]
+        if not filename:
+            return jsonify({"error": "No filename provided."}), 400
 
-    # Get the predefined_update
-    predefined_update = int(parts[-1])
+        doc = grid_collection.find_one({'name': filename})
+        if not doc:
+            return jsonify({"error": f"No saved grid found with name: {filename}"}), 404
+
+         # Makes sure size is an integer
+        size = int(doc['size'])
+        
+        # Convert state from floats to integers
+        state = []
+        for x_plane in doc['cells']:
+            plane = []
+            for y_row in x_plane:
+                row = []
+                for z_val in y_row:
+                    # Convert float to int
+                    row.append(int(z_val))
+                plane.append(row)
+            state.append(plane)
+        
+        # Handle colours - makes them integers
+        colours = {}
+        for k, v in doc['colours'].items():
+            colours[int(k)] = int(v, 16) if v else 0
+        
+        # Makes sure that there is a colour for the empty cell
+        if 0 not in colours:
+            colours[0] = 0
+        
+        # Makes sure that predefined_update is an integer
+        predefined_update = int(doc.get('predefined_update', 0))
+
+        # Reinitialise the Grid object
+        global grid
+        grid = Grid(size, state, colours, predefined_update)
+
+        new_state = [[[cell.celldict() for cell in z] for z in y] for y in grid.cells]
+        return jsonify(new_state)
     
-    # Get the colours
-    colour_list = parts[2:-1]
-    colour_dict = {0:0}
-    for i in range(0, len(colour_list), 2):
-        colour_dict[int(colour_list[i])] = int(colour_list[i+1], 16)
+    except Exception as e:
+        print(f"Error in load_grid: {str(e)}")
+        return jsonify({"error": f"Failed to load grid: {str(e)}"}), 500
 
-    initial_state = []
-    index = 0
-    for x in range(size):
-        plane = []
-        for y in range(size):
-            row = [int(grid_data[index + z]) for z in range(size)]
-            plane.append(row)
-            index += size
-        initial_state.append(plane)
-
-    global grid
-    grid = Grid(size, initial_state, colour_dict, predefined_update)
-    new_state = [[[cell.celldict() for cell in z] for z in y] for y in grid.cells]
-    return jsonify(new_state)
 
 @app.route('/edit-rules', methods=['POST'])
 def edit_rules():
@@ -112,6 +131,7 @@ def edit_rules():
 
     if new_rules:
         
+        # Updates the rules
         x, y, z = new_rules.split('/')
         stay_alive = list(map(int, x.split(',')))
         get_alive = list(map(int, y.split(',')))
@@ -125,63 +145,4 @@ def edit_rules():
 
 
 if __name__ == '__main__':
-    app.run()
-"""
-# to test concurrency
-
-if __name__ == '__main__':
-
-    import time
-
-    size = int(5)
-    initial_state = [[[1 if (x + y + z) % 2 == 0 else 0 for z in range(size)] for y in range(size)] for x in range(size)]
-    grid = Grid(size, initial_state, {0:0, 1:0xff0000})
-
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'initial_state.txt')
-
-    with open(file_path, 'r') as f:
-        content = f.read().strip()
-
-    # Get the size of the grid and the grid
-    parts = content.split()
-    size = int(parts[0])
-    grid_data = parts[1]
-
-    # Get the predefined_update
-    predefined_update = int(parts[-1])
-
-    # Get the colours
-    colour_list = parts[2:-1]
-    colour_dict = {0:0}
-    for i in range(0, len(colour_list), 2):
-        colour_dict[int(colour_list[i])] = int(colour_list[i+1], 16)
-
-    initial_state = []
-    index = 0
-    for x in range(size):
-        plane = []
-        for y in range(size):
-            row = [int(grid_data[index + z]) for z in range(size)]
-            plane.append(row)
-            index += size
-        initial_state.append(plane)
-
-    meanfull = []
-    for y in range(10):
-        grid = Grid(size, initial_state, colour_dict, predefined_update)
-
-        meanel = []
-        for x in range(10):
-            start_time = time.time()
-            grid.update()
-            end_time = time.time()
-            meanel.append(end_time - start_time)
-        meanfull.append(meanel)
-    
-    meanfinal = []
-    for x in meanfull:
-        meanfinal.append(sum(x)/len(x))
-
-    
-    print(f"Update took {sum(meanfinal)/len(meanfinal):.4f} seconds")       
-    """
+    app.run(host='0.0.0.0', port=5000)

@@ -1,6 +1,6 @@
 from cell import Cell
 import os
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor,  as_completed
+from concurrent.futures import ThreadPoolExecutor,  as_completed
 import unittest
 
 

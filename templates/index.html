@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tree Simulation</title>
+    <title>3D Cellular Automaton</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
-    <h1>Tree Simulation</h1>
+    <h1>3D Cellular Automaton</h1>
     <div>
         <label for="grid-size">Grid Size:</label>
         <input type="number" id="grid-size" name="grid-size" min="1" max="50" value="5">
-        <button onclick="initialiseGrid()">Initialize Grid</button>
+        <button onclick="initialiseGrid()">Initialise Grid</button>
         <button onclick="editRules()">Edit</button>
     </div>
     <div>
@@ -24,8 +24,7 @@
     <button onclick="next()">Next</button>
     <button id="play-stop-button" onclick="togglePlay()">Play</button>
     <button onclick="saveGrid()">Save</button>
-    <input type="file" id="file-input" style="display:none" onchange="loadGrid(event)">
-    <button onclick="document.getElementById('file-input').click()">Load</button>
+    <button onclick="loadGrid()">Load</button>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

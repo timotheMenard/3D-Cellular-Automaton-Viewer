@@ -170,25 +170,35 @@ async function saveGrid() {
 }
 
 // Load grid state from uploaded file
-async function loadGrid(event) {
-    try {
-    const file = event.target.files[0];
-    const formData = new FormData();
-    formData.append('file', file);
+async function loadGrid() {
+    const filename = prompt("Enter the filename to load:", "grid_state");
+    if (!filename) return;
 
-    const response = await fetch('/load', {
-        method: 'POST',
-        body: formData
-    });
-    const newState = await response.json();
-    gridSize = newState.length;
-    scene.clear();
-    createGrid(newState);
-    updateCameraPosition();
-    } catch (error) {
-        console.error('Error:', error);
+    try {
+        const response = await fetch('/load', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename })
+        });
+        
+        const newState = await response.json();
+        
+        // Update grid size based on loaded data
+        gridSize = newState.length;
+        document.getElementById('grid-size').value = gridSize;
+        
+        // Clear the scene and create new grid
+        scene.clear();
+        createGrid(newState);
+        updateCameraPosition();
+        
+        console.log('Grid loaded successfully');
+    } catch (err) {
+        console.error('Load error:', err);
+        alert("Could not load grid: " + err.message);
     }
 }
+
 
 // Prompt user to edit automaton rules and send to server
 async function editRules() {
